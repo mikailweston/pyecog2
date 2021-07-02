@@ -4,6 +4,7 @@ from scipy import signal, stats
 # import pyqtgraph_copy.pyqtgraph as pg
 import pyqtgraph as pg
 import numpy as np
+from scipy import signal
 
 
 class PyecogPlotCurveItem(pg.PlotCurveItem):
@@ -66,6 +67,23 @@ class PyecogPlotCurveItem(pg.PlotCurveItem):
         if self.parent_viewbox.viewRange()[1][0]-2 < self.channel < self.parent_viewbox.viewRange()[1][1]+2: # Avoid plotting channels out of view
             visible_data, visible_time = self.project.get_data_from_range(self.parent_viewbox.viewRange()[0], self.channel,
                                                                           n_envelope=n, for_plot = True)
+            if self.project.filter_settings[0]: # apply LP filter only for plots
+                fs = 2/(visible_time[2]-visible_time[0])
+                nyq = 0.5 * fs[0]
+                hpcutoff = min(max(self.project.filter_settings[1] / nyq, 0.001), .5)
+                visible_data = visible_data - np.mean(visible_data)
+                lpcutoff = min(max(self.project.filter_settings[2] / nyq, 0.001), 1)
+                # for some reason the bandpass butterworth filter is very unstable
+                if lpcutoff<.99:  # don't apply filter if LP cutoff freqquency is above nyquist freq.
+                    # if self.verbose: print('applying LP filter to display data:', filter_settings, fs, nyq, lpcutoff)
+                    b, a = signal.butter(2, lpcutoff, 'lowpass', analog=False)
+                    visible_data = signal.filtfilt(b, a, visible_data,axis =0,method='gust')
+                if hpcutoff > .001: # don't apply filter if HP cutoff frequency too low.
+                    # if self.verbose: print('applying HP filter to display data:', filter_settings, fs, nyq, hpcutoff)
+                    b, a = signal.butter(2, hpcutoff, 'highpass', analog=False)
+                    visible_data = signal.filtfilt(b, a, visible_data,axis =0,method='gust')
+
+
         else:
             visible_data = np.zeros(1)
             visible_time = np.zeros(1)
@@ -169,11 +187,11 @@ class PyecogLinearRegionItem(pg.LinearRegionItem):
             c.setAlpha(min(c.alpha() * 2, 255))
             hoverBrush = pg.functions.mkBrush(c)
         self.setHoverBrush(hoverBrush)
-        self.label = label  # Label of the annotation
+        # self.label = label  # Label of the annotation
         self.id = id  # field to identify corresponding annotation in the annotations object
-        label_text = pg.TextItem(label, anchor=(0, 0), color=pen.color())
-        label_text.setParentItem(self.lines[0])
-        label_text.updateTextPos()
+        self.label_text = pg.TextItem(label, anchor=(0, 0), color=pen.color())
+        self.label_text.setParentItem(self.lines[0])
+        self.label_text.updateTextPos()
         self.menu = None
         self.setAcceptedMouseButtons(self.acceptedMouseButtons() | QtCore.Qt.RightButton)
         self.setZValue(0.1)
@@ -311,6 +329,16 @@ class PyecogLinearRegionItem(pg.LinearRegionItem):
             self.prepareGeometryChange()
 
         return br
+
+    def update_fields(self,pos,label,color_brush,color_pen):
+        self.setRegion(pos)
+        self.label_text.setText(label)
+        self.label_text.setColor(pg.functions.mkColor(color_pen))
+        self.brush.setColor(pg.functions.mkColor(color_brush))
+        self.lines[0].pen.setColor(pg.functions.mkColor(color_pen))
+        self.lines[1].pen.setColor(pg.functions.mkColor(color_pen))
+        self.update()
+
 
 class PyecogCursorItem(pg.InfiniteLine):
     def __init__(self, pos=None, angle=90, pen=None, movable=True, bounds=None,
